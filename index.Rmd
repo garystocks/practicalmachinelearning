@@ -1,0 +1,170 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Gary Stocks"
+date: "18 July 2018"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(caret)
+library(ggplot2)
+
+```
+
+## Machine Learning Model to Predict the Quality of Weight Lifting Exercises
+
+
+### Executive Summary
+
+This report describes the development of a machine learning model to predict how well people do weight lifting exercises. Data from sensors attached to 6 people subjects, who performed dumbbell lifts with a 1.25 kg weight, were used to develop a model to predict whether the exercise was performed correctly or not. The sensors were attached to the belt, forearm, arm and dumbbell. More information is available here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.  
+
+A random forest model was selected as the most accurate model from a number of models tested. The 95% confidence interval for the accuracy of the final model is estimated to be between 99.9% and 100%, which means the estimated out-of-sample error is virtually zero.
+
+
+### Exploratory Data Analysis
+
+The dataset has 19622 observations with 160 variables for each observation. The variables include measures of Euler angles from the sensor measures and 8 features for each one, as well as derivative features such as the mean and standard deviation. The outcome variable (*classe*) has 5 categories - A indicates the exercise was performed correctly and B through E indicate the exercise was performed incorrectly in various ways.
+
+The training data was obtained here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv. The test data was obtained here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv.
+
+The training data set is split randomly into a *training* set to train the models (60% of observations) and a *testing* set to estimate the out-of-sample error rate (40% of observations). The test data imported is renamed as the *validation* data set.
+
+To explore the data, the features related to the belt, arm, forearm and dumbbell are separated. The roll, pitch, yaw and total acceleration related to each of the belt, arm, forearm and dumbbell sensors are plotted against the outcome (classe). Only the feature plots for the belt sensor measurements are shown to illustrate the nature of the data. The box feature plot highlights the difference in mean of the yaw and roll sensor measurements between *classe* A (correctly performed dumbbell lift) and B through E (incorrectly performed).
+
+```{r explore}
+
+# Load training and testing data sets
+training <- read.csv("D:/Users/gary.stocks/Desktop/pml-training.csv")
+validation <- read.csv("D:/Users/gary.stocks/Desktop/pml-testing.csv")
+
+# Divide the training data into a training and testing set
+inTrain <- createDataPartition(training$classe, p = .6)[[1]]
+training <- training[inTrain,]
+testing <- training[-inTrain,]
+
+# Subset predictors from training set (variable 160 is classe)
+predictors <- training[, 8:159]
+
+# Remove columns with almost all NAs
+predictors <- predictors[, colSums(is.na(predictors)) == 0]
+
+# Remove variables with near zero variance
+predictors <- predictors[, - nearZeroVar(predictors)]
+
+# Subset data for belt, arm, forearm and dumbbell
+indices_belt <- grep("belt", names(predictors))
+predictors_belt <- predictors[, indices_belt]
+
+indices_arm <- grep("arm", names(predictors))
+predictors_arm <- predictors[, indices_arm]
+indices_forearm <- grep("forearm", names(predictors_arm))
+predictors_forearm <- predictors_arm[, indices_forearm]
+predictors_arm <- predictors_arm[, - indices_forearm]
+
+indices_dumbbell <- grep("dumbbell", names(predictors))
+predictors_dumbbell <- predictors[, indices_dumbbell]
+
+# Plot roll, pitch, yaw and total acceleration for belt
+featurePlot(x = predictors_belt[, 1:4], y = training$classe, plot = "pairs")
+featurePlot(x = predictors_belt[, 1:4], y = training$classe, plot = "ellipse")
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+featurePlot(x = predictors_belt[, 1:4], y = training$classe, plot = "density", scales = scales)
+featurePlot(x = predictors_belt[, 1:4], y = training$classe, plot = "box")
+
+```
+
+
+### Model Training
+
+A 10-fold cross validation is used to estimate accuracy. This splits the training data into 10 parts, trains the model on 9 and tests on 1, and releases for all combinations of train-test splits. The accuracy metric is used to select the best model. This is a ratio of the number of correctly predicted instances divided by the total number of instances.
+
+A set of models are trained, including a linear model (linear discriminant analysis), nonlinear models (k-nearest neighbours and classification and regression trees) and advanced models (support vector machine and random forest).
+
+```{r train, cache=TRUE}
+
+# Set control parameters
+control <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+metric <- "Accuracy"
+
+# Include the classe variable with the predictors
+data <- cbind(training$classe, predictors)
+colnames(data)[1] <- "classe"
+
+# Train a linear discriminant analysis model 
+set.seed(12345)
+fit.lda <- train(classe ~ ., data = data, method = "lda", metric = metric, trControl = control)
+
+# Train nonlinear models
+set.seed(12345)
+fit.cart <- train(classe ~ ., data = data, method = "rpart", metric = metric, trControl = control)
+
+set.seed(12345)
+fit.knn <- train(classe ~ ., data = data, method = "knn", metric = metric, trControl = control)
+
+# Train advanced models
+set.seed(12345)
+fit.svm <- train(classe ~ ., data = data, method = "svmRadial", metric = metric, trControl = control, na.action = na.omit)
+
+set.seed(12345)
+fit.rf <- train(classe ~ ., data = data, method = "rf", metric = metric, trControl = control, na.action = na.omit)
+
+```
+
+
+### Model Comparison and Selection
+
+The results of all the models are summarised. The random forest (fit.rf) model is the most accurate with a mean 99.1% accuracy, followed by the support vector machine (fit.svm) with a mean 92% accuracy. This means the fit.rf model correctly predicts 99 out of 100 of the training data observations correctly.
+
+```{r select}
+
+# Summarize accuracy of models
+results <- resamples(list(lda=fit.lda, cart=fit.cart, knn=fit.knn, svm=fit.svm, rf=fit.rf))
+summary(results)
+
+```
+
+
+### Model Testing
+
+To estimate the out-of-sample error, predictions are made using the selected model (fit.rf).
+
+```{r test}
+
+# First subset predictors from training set (variable 160 is classe)
+predictors_test <- testing[, 8:159]
+
+# Remove columns with almost all NAs
+predictors_test <- predictors_test[, colSums(is.na(predictors_test)) == 0]
+
+# Remove variables with near zero variance
+predictors_test <- predictors_test[, - nearZeroVar(predictors_test)]
+
+# Add the outcome variable (classe)
+data_test <- cbind(testing$classe, predictors_test)
+colnames(data_test)[1] <- "classe"
+
+# Predict on the most accurate model
+predictions1 <- predict(fit.rf, data_test)
+
+```
+
+
+### Estimate Out-of-Sample Error
+
+A confusion matrix is used to estimate the out-of-sample error for the most accurate model (fit.rf). A 95% confidence interval of the accuracy of the fit.rf model on the test data is between 99.9% and 100%, which means the estimate of the out-of-sample error is between 0% and 0.1%.  
+
+```{r estimate}
+
+# Confusion matrix
+confusionMatrix(predictions1, data_test$classe)
+
+```
+
+
+### Conclusion
+
+To predict how well people do dumbbell lifts, a random forest model is recommended as the most accurate model. Based on the training and testing data from 6 subjects, this model is highly accurate.
