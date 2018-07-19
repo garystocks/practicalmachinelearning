@@ -130,11 +130,11 @@ summary(results)
 
 ### Model Testing
 
-To estimate the out-of-sample error, predictions are made using the selected model (fit.rf).
+To estimate the out-of-sample error, predictions are made on the *testing* data using the selected model (fit.rf).
 
 ```{r test}
 
-# First subset predictors from training set (variable 160 is classe)
+# First subset predictors from testing set (variable 160 is classe)
 predictors_test <- testing[, 8:159]
 
 # Remove columns with almost all NAs
